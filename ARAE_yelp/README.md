@@ -8,4 +8,5 @@ From https://github.com/jakezhaojb/ARAE
 - Python 3.6.3 on Linux
 - PyTorch 0.3.1, JSON, Argparse
 - KenLM (https://github.com/kpu/kenlm)
+- Spacy, with `en_core_web_sm` installed
 

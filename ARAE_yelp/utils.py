@@ -2,11 +2,15 @@ import os
 import torch
 import numpy as np
 import random
+import spacy
 
 PAD_WORD="<pad>"
 EOS_WORD="<eos>"
 BOS_WORD="<bos>"
 UNK="<unk>"
+
+nlp = spacy.load("en_core_web_sm")
+tokenizer = nlp.Defaults.create_tokenizer(nlp)
 
 def load_kenlm():
     global kenlm
@@ -95,9 +99,8 @@ class Corpus(object):
             with open(path, 'r') as f:
                 for line in f:
                     L = line.lower() if self.lowercase else line
-                    words = L.strip().split(" ")
-                    for word in words:
-                        self.dictionary.add_word(word)
+                    for token in tokenizer(L.strip()):
+                        self.dictionary.add_word(token.text)
 
         # prune the vocabulary
         self.dictionary.prune_vocab(k=self.vocab_size, cnt=False)
@@ -111,7 +114,7 @@ class Corpus(object):
             for line in f:
                 linecount += 1
                 L = line.lower() if self.lowercase else line
-                words = L.strip().split(" ")
+                words = [token.text for token in tokenizer(L.strip())]
                 if self.maxlen > 0 and len(words) > self.maxlen:
                     dropped += 1
                     continue

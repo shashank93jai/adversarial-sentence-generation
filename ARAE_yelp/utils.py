@@ -3,14 +3,19 @@ import torch
 import numpy as np
 import random
 import spacy
+from bpemb import BPEmb
 
 PAD_WORD="<pad>"
 EOS_WORD="<eos>"
 BOS_WORD="<bos>"
 UNK="<unk>"
 
+BPE_VOCAB_SIZE=25000
+BPE_DIM=300
+
 nlp = spacy.load("en_core_web_sm")
 tokenizer = nlp.Defaults.create_tokenizer(nlp)
+bpemb_en = BPEmb(lang="en", vs=BPE_VOCAB_SIZE, dim=BPE_DIM)
 
 def load_kenlm():
     global kenlm
@@ -100,7 +105,8 @@ class Corpus(object):
                 for line in f:
                     L = line.lower() if self.lowercase else line
                     for token in tokenizer(L.strip()):
-                        self.dictionary.add_word(token.text)
+                        for bp in bpemb_en.encode(token.text):
+                            self.dictionary.add_word(bp)
 
         # prune the vocabulary
         self.dictionary.prune_vocab(k=self.vocab_size, cnt=False)
@@ -114,7 +120,8 @@ class Corpus(object):
             for line in f:
                 linecount += 1
                 L = line.lower() if self.lowercase else line
-                words = [token.text for token in tokenizer(L.strip())]
+                words = [bp for token in tokenizer(L.strip())
+                         for bp in bpemb_en.encode(token.text)]
                 if self.maxlen > 0 and len(words) > self.maxlen:
                     dropped += 1
                     continue

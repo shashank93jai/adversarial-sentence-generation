@@ -111,7 +111,7 @@ parser.add_argument('--seed', type=int, default=1111,
                     help='random seed')
 parser.add_argument('--cuda', dest='cuda', action='store_true',
                     help='use CUDA')
-parser.add_argument('--no-cuda', dest='cuda', action='store_true',
+parser.add_argument('--no-cuda', dest='cuda', action='store_false',
                     help='not using CUDA')
 parser.set_defaults(cuda=True)
 parser.add_argument('--device_id', type=str, default='0')

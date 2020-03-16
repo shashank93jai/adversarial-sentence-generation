@@ -38,9 +38,10 @@ class Manhattan_LSTM(nn.Module):
         embedded_2 = self.embedding(input[1]) # L, B, V
 
         batch_size = embedded_1.size()[1]
-
-        outputs_1, hidden_1 = self.lstm_1(embedded_1, hidden)
-        outputs_2, hidden_2 = self.lstm_2(embedded_2, hidden)
+        outputs_1, hidden_1 = self.lstm_1(embedded_1)
+        outputs_2, hidden_2 = self.lstm_2(embedded_2)
+        #outputs_1, hidden_1 = self.lstm_1(embedded_1, hidden)
+        #outputs_2, hidden_2 = self.lstm_2(embedded_2, hidden)
 
         similarity_scores = self.exponent_neg_manhattan_distance(hidden_1[0].permute(1, 2, 0).view(batch_size, -1),
                                                                  hidden_2[0].permute(1, 2, 0).view(batch_size, -1))

@@ -26,10 +26,11 @@ class MLP_Classify(nn.Module):
             self.add_module("layer"+str(i+1), layer)
 
             # No batch normalization in first layer
-            if i != 0:
-                bn = nn.BatchNorm1d(layer_sizes[i+1])
-                self.layers.append(bn)
-                self.add_module("bn"+str(i+1), bn)
+            # Not using batch normalization layers, because the data is being processed separately for the two targets, the mean and std devaition is off while doing evaluation which is causing problems
+            #if i != 0:
+            #    bn = nn.BatchNorm1d(layer_sizes[i+1], momentum=1)
+            #    self.layers.append(bn)
+            #    self.add_module("bn"+str(i+1), bn)
 
             self.layers.append(activation)
             self.add_module("activation"+str(i+1), activation)
@@ -175,7 +176,7 @@ class Seq2Seq2Decoder(nn.Module):
         # hidden = torch.div(hidden, norms.unsqueeze(1).expand_as(hidden))
 
         if noise and self.noise_r > 0:
-            gauss_noise = torch.normal(means=torch.zeros(hidden.size()),
+            gauss_noise = torch.normal(mean=torch.zeros(hidden.size()),
                                        std=self.noise_r)
             hidden = hidden + to_gpu(self.gpu, Variable(gauss_noise))
 
@@ -225,8 +226,9 @@ class Seq2Seq2Decoder(nn.Module):
             state = self.init_hidden(batch_size)
 
         # <sos>
-        self.start_symbols.data.resize_(batch_size, 1)
-        self.start_symbols.data.fill_(1)
+        # TODO: NL: Removing .data resolved an error, but I'm not sure if this was the right thing to do here.
+        self.start_symbols.resize_(batch_size, 1)
+        self.start_symbols.fill_(1)
         self.start_symbols = to_gpu(self.gpu, self.start_symbols)
 
         if whichdecoder == 1:
@@ -249,7 +251,7 @@ class Seq2Seq2Decoder(nn.Module):
                 vals, indices = torch.max(overvocab, 1)
                 indices = indices.unsqueeze(1)
             else:
-                assert 1 == 0
+                # assert 1 == 0
                 # sampling
                 probs = F.softmax(overvocab/temp)
                 indices = torch.multinomial(probs, 1)

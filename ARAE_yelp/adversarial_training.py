@@ -120,6 +120,11 @@ parser.add_argument('--no-cuda', dest='cuda', action='store_false',
 parser.set_defaults(cuda=True)
 parser.add_argument('--device_id', type=str, default='0')
 
+parser.add_argument('--perturb', type=str)
+parser.add_argument('--epsilon', type=float, default=0)
+parser.add_argument('--alpha', type=float, default=0)
+parser.add_argument('--steps', type=int, default=0)
+
 args = parser.parse_args()
 print(vars(args))
 
@@ -693,10 +698,12 @@ for epoch in range(1, args.epochs+1):
                 train_ae(2, train2_data[niter], total_loss_ae2, start_time, niter)
             
             #pgd
-            epsilon = 0.005
-            alpha = 0.0005
-            classify_loss1, classify_acc1 = train_classifier_adversarial(1, train1_data[niter], perturb='pgd', epsilon=epsilon, alpha=alpha, pgd_iters=40)
-            classify_loss2, classify_acc2 = train_classifier_adversarial(2, train2_data[niter], perturb='pgd', epsilon=epsilon, alpha=alpha, pgd_iters=40)
+            epsilon = args.epsilon
+            alpha = args.alpha
+            pgd_iters = args.steps
+            perturb = args.perturb
+            classify_loss1, classify_acc1 = train_classifier_adversarial(1, train1_data[niter], perturb=perturb, epsilon=epsilon, alpha=alpha, pgd_iters=pgd_iters)
+            classify_loss2, classify_acc2 = train_classifier_adversarial(2, train2_data[niter], perturb=perturb, epsilon=epsilon, alpha=alpha, pgd_iters=pgd_iters)
             classify_loss = (classify_loss1 + classify_loss2) / 2
             classify_acc = (classify_acc1 + classify_acc2) / 2
             # reverse to autoencoder

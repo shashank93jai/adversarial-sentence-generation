@@ -21,6 +21,8 @@ parser = argparse.ArgumentParser(description='ARAE for Yelp transfer')
 # Path Arguments
 parser.add_argument('--data_path', type=str, required=True,
                     help='location of the data corpus')
+parser.add_argument('--adversarial_data_path', type=str, default='adversarial_data',
+                    help='location of the data corpus')
 parser.add_argument('--outf', type=str, default='yelp_example',
                     help='output directory name')
 parser.add_argument('--modelf', type=str, default='model_output',
@@ -58,7 +60,7 @@ parser.add_argument('--arch_g', type=str, default='128-128',
                     help='generator architecture (MLP)')
 parser.add_argument('--arch_d', type=str, default='128-128',
                     help='critic/discriminator architecture (MLP)')
-parser.add_argument('--arch_classify', type=str, default='128-128',
+parser.add_argument('--arch_classify', type=str, default='128-128-128',
                     help='classifier architecture')
 parser.add_argument('--z_size', type=int, default=32,
                     help='dimension of random noise z to feed into generator')
@@ -118,6 +120,11 @@ parser.add_argument('--no-cuda', dest='cuda', action='store_false',
 parser.set_defaults(cuda=True)
 parser.add_argument('--device_id', type=str, default='0')
 
+parser.add_argument('--perturb', type=str)
+parser.add_argument('--epsilon', type=float, default=0)
+parser.add_argument('--alpha', type=float, default=0)
+parser.add_argument('--steps', type=int, default=0)
+
 args = parser.parse_args()
 print(vars(args))
 
@@ -147,10 +154,12 @@ label_ids = {"pos": 1, "neg": 0}
 id2label = {1:"pos", 0:"neg"}
 
 # (Path to textfile, Name, Use4Vocab)
-datafiles = [(os.path.join(args.data_path, "valid1.txt"), "valid1", False),
-             (os.path.join(args.data_path, "valid2.txt"), "valid2", False),
+datafiles = [(os.path.join(args.data_path, "test1.txt"), "test1", False),
+             (os.path.join(args.data_path, "test0.txt"), "test2", False),
              (os.path.join(args.data_path, "train1.txt"), "train1", True),
-             (os.path.join(args.data_path, "train2.txt"), "train2", True)]
+             (os.path.join(args.data_path, "train2.txt"), "train2", True)
+            ]
+
 
 vocabdict = None
 if args.load_vocab != "":
@@ -177,8 +186,8 @@ with open("{}/log.txt".format(args.outf), 'w') as f:
     f.write("\n\n")
 
 eval_batch_size = 100
-test1_data = batchify(corpus.data['valid1'], eval_batch_size, shuffle=False)
-test2_data = batchify(corpus.data['valid2'], eval_batch_size, shuffle=False)
+test1_data = batchify(corpus.data['test1'], eval_batch_size, shuffle=False)
+test2_data = batchify(corpus.data['test2'], eval_batch_size, shuffle=False)
 train1_data = batchify(corpus.data['train1'], args.batch_size, shuffle=True)
 train2_data = batchify(corpus.data['train2'], args.batch_size, shuffle=True)
 
@@ -219,7 +228,7 @@ optimizer_gan_d = optim.Adam(gan_disc.parameters(),
 optimizer_classify = optim.Adam(classifier.parameters(),
                                 lr=args.lr_classify,
                                 betas=(args.beta1, 0.999))
-
+#optimizer_classify = optim.SGD(classifier.parameters(), lr=0.1, momentum=0.9)
 criterion_ce = nn.CrossEntropyLoss()
 
 if args.cuda:
@@ -256,6 +265,16 @@ def load_model():
     if os.path.exists('{}/classifier_model.pt'.format(args.modelf)):            
         classifier.load_state_dict(torch.load('{}/classifier_model.pt'.format(args.modelf)))
 
+def fgsm_attack(sentence_embedding, epsilon, data_grad):
+    # Collect the element-wise sign of the data gradient
+    sign_data_grad = data_grad.sign()
+    # Create the perturbed image by adjusting each pixel of the input image
+    perturbed_embedding = sentence_embedding + epsilon*sign_data_grad
+    #clip within normal range for embedding
+    perturbed_embedding = torch.clamp(perturbed_embedding, -0.34, 0.32)
+    # Return the perturbed image
+    return perturbed_embedding
+
 def train_classifier(whichclass, batch):
     classifier.train()
     classifier.zero_grad()
@@ -266,6 +285,7 @@ def train_classifier(whichclass, batch):
 
     # Train
     code = autoencoder(0, source, lengths, noise=False, encode_only=True).detach()
+    
     scores = classifier(code)
     classify_loss = F.binary_cross_entropy(scores.squeeze(1), labels)
     classify_loss.backward()
@@ -274,11 +294,65 @@ def train_classifier(whichclass, batch):
     classify_loss = classify_loss.cpu().item()
 
     pred = scores.data.round().squeeze(1)
-
     accuracy = pred.eq(labels.data).float().mean()
 
     return classify_loss, accuracy
 
+
+def train_classifier_adversarial(whichclass, batch, perturb=None, epsilon=0.0, alpha=.0005, pgd_iters=40):
+    classifier.train()
+    classifier.zero_grad()
+
+    source, target, lengths = batch
+    source = to_gpu(args.cuda, Variable(source))
+    labels = to_gpu(args.cuda, Variable(torch.zeros(source.size(0)).fill_(whichclass-1)))
+
+    # Train
+    code = autoencoder(0, source, lengths, noise=False, encode_only=True).detach()
+    code.requires_grad = True
+    
+    scores = classifier(code)
+    classify_loss = F.binary_cross_entropy(scores.squeeze(1), labels)
+    classify_loss.backward(retain_graph=True)
+
+    if perturb == 'fgsm':
+        code_grad = code.grad.data
+        perturbed_code = fgsm_attack(code, epsilon, code_grad)
+    elif perturb == 'pgd':
+        perturbed_code = code.clone().detach()
+        for i in range(pgd_iters):
+            perturbed_code.requires_grad = True
+            tmp_scores = classifier(perturbed_code)
+            tmp_loss = F.binary_cross_entropy(tmp_scores.squeeze(1), labels)
+            classifier.zero_grad()
+            tmp_loss.backward(retain_graph=True)
+
+            # step in the direction of the gradient
+            perturbed_code = perturbed_code + alpha * perturbed_code.grad.sign()
+            
+            # Workaround as PyTorch doesn't have elementwise clip
+            # from: https://gist.github.com/oscarknagg/45b187c236c6262b1c4bbe2d0920ded6#file-projected_gradient_descent-py
+            perturbed_code = torch.max(torch.min(perturbed_code, code + epsilon), code - epsilon).detach()
+
+    
+    scores_adversarial = classifier(perturbed_code)
+    classify_loss_adversarial = F.binary_cross_entropy(scores_adversarial.squeeze(1), labels)
+    
+    #overall loss
+    alpha = 0.5
+    loss = alpha*classify_loss + (1-alpha)*classify_loss_adversarial
+    classifier.zero_grad()
+    loss.backward()
+    optimizer_classify.step()
+    
+    #classify_loss = classify_loss.cpu().item()
+    #overall loss
+    loss = loss.cpu().item()
+    pred = scores.data.round().squeeze(1)
+    accuracy = pred.eq(labels.data).float().mean()
+
+    return loss, accuracy        
+        
 def evaluate_classifier(whichclass, data_source, epoch):
     classifier.eval()
     autoencoder.eval()
@@ -303,6 +377,7 @@ def evaluate_classifier(whichclass, data_source, epoch):
             all_accuracies += accuracy
             bcnt += 1
     return total_loss/len(data_source), all_accuracies/bcnt
+
 
 def grad_hook_cla(grad):
     return grad * args.lambda_class
@@ -592,6 +667,7 @@ mone = one * -1
 #TO DO: add an arg to decide whether to load model checkpoint or not
 load_model()
 
+
 for epoch in range(1, args.epochs+1):
     # update gan training schedule
     if epoch in gan_schedule:
@@ -621,9 +697,13 @@ for epoch in range(1, args.epochs+1):
             total_loss_ae2, _ = \
                 train_ae(2, train2_data[niter], total_loss_ae2, start_time, niter)
             
-            # train classifier ----------------------------
-            classify_loss1, classify_acc1 = train_classifier(1, train1_data[niter])
-            classify_loss2, classify_acc2 = train_classifier(2, train2_data[niter])
+            #pgd
+            epsilon = args.epsilon
+            alpha = args.alpha
+            pgd_iters = args.steps
+            perturb = args.perturb
+            classify_loss1, classify_acc1 = train_classifier_adversarial(1, train1_data[niter], perturb=perturb, epsilon=epsilon, alpha=alpha, pgd_iters=pgd_iters)
+            classify_loss2, classify_acc2 = train_classifier_adversarial(2, train2_data[niter], perturb=perturb, epsilon=epsilon, alpha=alpha, pgd_iters=pgd_iters)
             classify_loss = (classify_loss1 + classify_loss2) / 2
             classify_acc = (classify_acc1 + classify_acc2) / 2
             # reverse to autoencoder
@@ -667,7 +747,9 @@ for epoch in range(1, args.epochs+1):
                   % (epoch, args.epochs, niter, len(train1_data),
                      errD.item(), errD_real.item(),
                      errD_fake.item(), errG.item()))
-            
+            print('Classify loss1: {}, Classify accuracy1: {}, Classify loss2: {}, Classify accuracy2:{}'.format(classify_loss1, classify_acc1,
+                                                                                                                 classify_loss2, classify_acc2))
+            print("Classify loss: {:5.2f} | Classify accuracy: {:3.3f}\n".format(classify_loss, classify_acc))
             with open("{}/log.txt".format(args.outf), 'a') as f:
                 f.write('[%d/%d][%d/%d] Loss_D: %.4f (Loss_D_real: %.4f '
                         'Loss_D_fake: %.4f) Loss_G: %.4f\n'
@@ -690,7 +772,7 @@ for epoch in range(1, args.epochs+1):
 
     test_loss_classifier, accuracy_classifier = evaluate_classifier(2, test2_data, epoch)
     print('Classifier on Test 2, Loss:{} Accuracy:{}'.format(test_loss_classifier, accuracy_classifier))
-
+    
     test_loss, accuracy = evaluate_autoencoder(1, test1_data[:1000], epoch)
     print('-' * 89)
     print('| end of epoch {:3d} | time: {:5.2f}s | test loss {:5.2f} | '
@@ -730,7 +812,16 @@ for epoch in range(1, args.epochs+1):
     train1_data = batchify(corpus.data['train1'], args.batch_size, shuffle=True)
     train2_data = batchify(corpus.data['train2'], args.batch_size, shuffle=True)
     
-test_loss, accuracy = evaluate_autoencoder(1, test1_data, epoch+1)
+epoch = args.epochs+1
+epoch_start_time = time.time()
+
+test_loss_classifier, accuracy_classifier = evaluate_classifier(1, test1_data, epoch)
+print('Classifier on Data 1, Loss:{} Accuracy:{}'.format(test_loss_classifier, accuracy_classifier))
+
+test_loss_classifier, accuracy_classifier = evaluate_classifier(2, test2_data, epoch)
+print('Classifier on Data 2, Loss:{} Accuracy:{}'.format(test_loss_classifier, accuracy_classifier))
+
+test_loss, accuracy = evaluate_autoencoder(1, test1_data, epoch)
 print('-' * 89)
 print('| end of epoch {:3d} | time: {:5.2f}s | test loss {:5.2f} | '
       'test ppl {:5.2f} | acc {:3.3f}'.
@@ -746,7 +837,7 @@ with open("{}/log.txt".format(args.outf), 'a') as f:
     f.write('-' * 89)
     f.write('\n')
 
-test_loss, accuracy = evaluate_autoencoder(2, test2_data, epoch+1)
+test_loss, accuracy = evaluate_autoencoder(2, test2_data, epoch)
 print('-' * 89)
 print('| end of epoch {:3d} | time: {:5.2f}s | test loss {:5.2f} | '
       'test ppl {:5.2f} | acc {:3.3f}'.
@@ -761,5 +852,6 @@ with open("{}/log.txt".format(args.outf), 'a') as f:
                    test_loss, math.exp(test_loss), accuracy))
     f.write('-' * 89)
     f.write('\n')
+
 # store models
 save_model()

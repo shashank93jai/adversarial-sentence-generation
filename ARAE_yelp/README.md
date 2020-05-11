@@ -1,4 +1,4 @@
-# ARAE for language style transfer on Yelp
+# ARAE for Polarity Classification on Yelp
 
 From https://github.com/jakezhaojb/ARAE
 

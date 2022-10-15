@@ -13,8 +13,10 @@ UNK="<unk>"
 BPE_VOCAB_SIZE=25000
 BPE_DIM=300
 
-nlp = spacy.load("en_core_web_sm")
-tokenizer = nlp.Defaults.create_tokenizer(nlp)
+from spacy.tokenizer import Tokenizer
+from spacy.lang.en import English
+nlp = English()
+tokenizer = Tokenizer(nlp.vocab)
 bpemb_en = BPEmb(lang="en", vs=BPE_VOCAB_SIZE, dim=BPE_DIM)
 
 def load_kenlm():

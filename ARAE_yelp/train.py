@@ -382,7 +382,7 @@ def evaluate_autoencoder(whichdecoder, data_source, epoch):
 
             aeoutf_from = "{}/{}_output_decoder_{}_from.txt".format(args.outf, epoch, whichdecoder)
             aeoutf_tran = "{}/{}_output_decoder_{}_tran.txt".format(args.outf, epoch, whichdecoder)
-            with open(aeoutf_from, 'w') as f_from, open(aeoutf_tran,'w') as f_trans:
+            with open(aeoutf_from, "w", encoding="utf-8") as f_from, open(aeoutf_tran,'w', encoding="utf-8") as f_trans:
                 max_indices1 = \
                     max_indices1.view(output.size(0), -1).data.cpu().numpy()
                 max_indices2 = \
@@ -411,7 +411,7 @@ def evaluate_generator(whichdecoder, noise, epoch):
     max_indices = \
         autoencoder.generate(whichdecoder, fake_hidden, maxlen=50, sample=args.sample)
 
-    with open("%s/%s_generated%d.txt" % (args.outf, epoch, whichdecoder), "w") as f:
+    with open("%s/%s_generated%d.txt" % (args.outf, epoch, whichdecoder), "w", encoding="utf-8") as f:
         max_indices = max_indices.data.cpu().numpy()
         for idx in max_indices:
             # generated sentence
